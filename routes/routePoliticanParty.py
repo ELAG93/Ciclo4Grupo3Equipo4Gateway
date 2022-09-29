@@ -4,6 +4,7 @@ import requests
 
 pp = Blueprint('pp', __name__)
 
+
 @pp.get("/pp")
 def indexPP():
     headers = {"Content-Type": "application/json; charset=utf-8"}

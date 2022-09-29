@@ -6,12 +6,18 @@ import json
 import datetime
 import re
 import requests
+from routes.routePoliticanParty import pp
 
 
 app = Flask(__name__)
 cors = CORS(app)
-app.config["JWT_SECRET_KEY"] = "LlaveSecreta"
-jwt = JWTManager(app)
+
+
+app.register_blueprint(pp)
+
+
+
+
 
 def infoJSON():
     with open('config.json') as file:
@@ -19,37 +25,55 @@ def infoJSON():
     return data
 
 
-@app.before_request
-def before_request_callback():
-    endPoint = limpiarURL(request.path)
-    excludeRoutes = ['/login']
-    if excludeRoutes.__contains__(request.path):
-        pass
-    elif verify_jwt_in_request():
-        user = get_jwt_identity()
-        if user['rol'] is not None:
-            tienePermiso = validarPermiso(endPoint, request.method, user['rol']['_id'])
-            if not tienePermiso:
-                return jsonify({"Mensaje": "Permiso, denegado"}), 401
-        else:
-            return jsonify({"Mensaje": "Permiso, denegado"}), 401
+info = infoJSON()
+headers = {"Content-Type": "application/json; charset=utf-8"}
+denegado = {"mensaje": "Permiso denegado"}
 
-def limpiarURL(url):
-    partes = request.path.split("/")
-    for parte in partes:
-        if re.search('\\d', parte):
-            url = url.replace(parte, "?")
+
+
+app.config["JWT_SECRET_KEY"] = info['secret']
+jwt = JWTManager(app)
+
+def format_url():
+    parts = request.path.split("/")
+    url = request.path
+    for part in parts:
+        if re.search('\\d', part):
+            url = url.replace(part, "?")
     return url
 
-def validarPermiso(endPoint, metodo, idRol):
-    url= infoJSON()['url_security']+"/permisos-rol/validar/rol/" + str(idRol)
+
+
+@app.before_request
+def before_request_callback():
+    request.path = format_url()
+    excludeRoutes = ['/login', '/users', '/users/?/rol/?', '/']
+    #Token
+    if request.path not in excludeRoutes:
+        if not verify_jwt_in_request():
+            return jsonify(denegado), 401
+
+        #Roles y permisos
+        user = get_jwt_identity()
+        if user['rol'] is None:
+            return jsonify(denegado), 401
+        else:
+            rol_id = user['rol']['_id']
+            route = format_url()
+            method = request.method
+            has_permission = validarPermiso(rol_id, route, method)
+            if not has_permission:
+                return jsonify(denegado), 401
+
+
+def validarPermiso(idRol, endPoint, metodo):
+    url= info['url_security']+"/permisos-rol/validar/rol/" + str(idRol)
     tienePermiso = False
-    headers = {"Content-Type": "application/json; charset=utf-8"}
     body = {
         "url": endPoint,
         "metodo": metodo
     }
-    response = requests.get(url, json=body, headers=headers)
+    response = requests.post(url, json=body, headers=headers)
     try:
         data = response.json()
         if("_id" in data):
@@ -59,15 +83,17 @@ def validarPermiso(endPoint, metodo, idRol):
     return tienePermiso
 
 
+@app.get("/")
+def test():
+    return jsonify({"Mensaje": "Sí funcionó"})
+
 
 @app.post("/login")
 def create_token():
     data = request.get_json()
-    header = {"Content-Type": "application/json; charset=utf-8"}
-    url = infoJSON()["url_security"] + "/users/validacion"
-    response = requests.post(url, json=data, headers=header)
+    url = info["url_security"] + "/users/validacion"
+    response = requests.post(url, json=data, headers=headers)
     code = response.status_code
-    
 
     if(code == 200):
         user = response.json()
@@ -80,17 +106,11 @@ def create_token():
         return jsonify({'mensaje': res['mensaje']}), code
 
 
-@app.get("/")
-def test():
-    json={}
-    json["Mensaje"] = "Bien"
-    return jsonify(json)
 
 
 
 
 if __name__ == '__main__':
-    info = infoJSON()
     print("Corriendo en: " + "http://" + info['url']+ ":"+ str(info['port']))
     serve(app, host=info['url'], port=info['port'])
 
